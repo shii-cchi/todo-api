@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi"
+	"github.com/joho/godotenv"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type todo struct {
@@ -21,7 +22,13 @@ var todoList []todo
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("Starting server...")
+
+	godotenv.Load()
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		log.Fatal("PORT is not found in the environment")
+	}
 
 	r := chi.NewRouter()
 
@@ -29,19 +36,19 @@ func main() {
 	r.Mount("/todo", todoHandlers())
 
 	srv := &http.Server{
-		Addr:         ":8080",
-		Handler:      r,
-		ReadTimeout:  60 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:    ":" + port,
+		Handler: r,
 	}
+
+	log.Printf("Server starting on port %s", port)
 
 	go func() {
 		err := srv.ListenAndServe()
-		checkErr(err)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}()
 
-	log.Println("server start listening on port 8080")
 	select {}
 }
 
@@ -62,10 +69,7 @@ func todoHandlers() http.Handler {
 }
 
 func fetchTodos(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(todoList)
-
-	//fmt.Fprintf(w, "get todos '%v'", todoList)
+	respondWithJSON(w, http.StatusOK, todoList)
 }
 
 func createTodo(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +83,7 @@ func createTodo(w http.ResponseWriter, r *http.Request) {
 
 	todoList = append(todoList, newTodo)
 
-	fmt.Fprintf(w, "post todo '%v'", newTodo)
+	respondWithJSON(w, http.StatusCreated, newTodo)
 }
 
 func updateTodo(w http.ResponseWriter, r *http.Request) {
@@ -99,9 +103,11 @@ func updateTodo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var exist bool
+	indToUpdate := -1
 	for i, elem := range todoList {
 		if elem.ID == id {
+			indToUpdate = i
+
 			if newTodo.Title != "" {
 				todoList[i].Title = newTodo.Title
 			}
@@ -110,17 +116,16 @@ func updateTodo(w http.ResponseWriter, r *http.Request) {
 				todoList[i].Status = newTodo.Status
 			}
 
-			exist = true
 			break
 		}
 	}
 
-	if !exist {
+	if indToUpdate == -1 {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
-	fmt.Fprintf(w, "Element with id = %d has been updated", id)
+	respondWithJSON(w, http.StatusOK, todoList[indToUpdate])
 }
 
 func deleteTodo(w http.ResponseWriter, r *http.Request) {
@@ -145,13 +150,21 @@ func deleteTodo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	todoList = append(todoList[:indToDelete], todoList[indToDelete+1:]...)
+	respondWithJSON(w, http.StatusOK, todoList[indToDelete])
 
-	fmt.Fprintf(w, "Element with id = %d has been deleted", id)
+	todoList = append(todoList[:indToDelete], todoList[indToDelete+1:]...)
 }
 
-func checkErr(err error) {
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	data, err := json.Marshal(payload)
+
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Failed to marshal JSON responce: %v", payload)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
+
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(data)
 }
