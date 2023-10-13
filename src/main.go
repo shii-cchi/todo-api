@@ -1,24 +1,22 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"github.com/shii-cchi/todo-api/internal/database"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 )
 
-type todo struct {
-	ID     int    `json:"id"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
+type apiConfig struct {
+	DB *database.Queries
 }
-
-var todoList []todo
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -30,10 +28,24 @@ func main() {
 		log.Fatal("PORT is not found in the environment")
 	}
 
+	dbURL := os.Getenv("DB_URL")
+	if dbURL == "" {
+		log.Fatal("DB_URL is not found in the environment")
+	}
+
+	conn, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal("Can't connect to database")
+	}
+
+	apiCfg := apiConfig{
+		DB: database.New(conn),
+	}
+
 	r := chi.NewRouter()
 
 	r.Get("/", homeHandler)
-	r.Mount("/todo", todoHandlers())
+	r.Mount("/todo", apiCfg.todoHandlers())
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -56,103 +68,153 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "my todo list")
 }
 
-func todoHandlers() http.Handler {
+func (apiCfg *apiConfig) todoHandlers() http.Handler {
 	rg := chi.NewRouter()
 	rg.Group(func(r chi.Router) {
-		r.Get("/", fetchTodos)
-		r.Post("/", createTodo)
-		r.Put("/{id}", updateTodo)
-		r.Delete("/{id}", deleteTodo)
+		r.Get("/", apiCfg.handlerFetchTodos)
+		r.Get("/{id}", apiCfg.handlerFetchTodo)
+		r.Post("/", apiCfg.handlerCreateTodo)
+		r.Put("/{id}", apiCfg.handlerUpdateTodo)
+		r.Delete("/{id}", apiCfg.handlerDeleteTodo)
 	})
 
 	return rg
 }
 
-func fetchTodos(w http.ResponseWriter, r *http.Request) {
-	respondWithJSON(w, http.StatusOK, todoList)
+func (apiCfg *apiConfig) handlerFetchTodos(w http.ResponseWriter, r *http.Request) {
+	todoList, err := apiCfg.DB.GetTodosList(r.Context())
+
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, fmt.Sprintf("Coudn't get todos: %v", err))
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, databaseTodoListtoTodoList(todoList))
 }
 
-func createTodo(w http.ResponseWriter, r *http.Request) {
-	var newTodo todo
-	err := json.NewDecoder(r.Body).Decode(&newTodo)
+func (apiCfg *apiConfig) handlerFetchTodo(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := uuid.Parse(idStr)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't parse id: %v", err))
 		return
 	}
 
-	todoList = append(todoList, newTodo)
+	todo, err := apiCfg.DB.GetTodo(r.Context(), id)
 
-	respondWithJSON(w, http.StatusCreated, newTodo)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, fmt.Sprintf("Coudn't get todos: %v", err))
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, databaseTodotoTodo(todo))
 }
 
-func updateTodo(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
-	id, err := strconv.Atoi(idStr)
+func (apiCfg *apiConfig) handlerCreateTodo(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Title  string `json:"title"`
+		Status string `json:"status"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+
+	params := parameters{}
+	err := decoder.Decode(&params)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Error parsing JSON: %v", err))
 		return
 	}
 
-	var newTodo todo
-	err = json.NewDecoder(r.Body).Decode(&newTodo)
+	todo, err := apiCfg.DB.CreateTodo(r.Context(), database.CreateTodoParams{
+		ID:     uuid.New(),
+		Title:  params.Title,
+		Status: params.Status,
+	})
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't create user: %v", err))
 		return
 	}
 
-	indToUpdate := -1
-	for i, elem := range todoList {
-		if elem.ID == id {
-			indToUpdate = i
-
-			if newTodo.Title != "" {
-				todoList[i].Title = newTodo.Title
-			}
-
-			if newTodo.Status != "" {
-				todoList[i].Status = newTodo.Status
-			}
-
-			break
-		}
-	}
-
-	if indToUpdate == -1 {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, todoList[indToUpdate])
+	respondWithJSON(w, http.StatusCreated, databaseTodotoTodo(todo))
 }
 
-func deleteTodo(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
-	id, err := strconv.Atoi(idStr)
+func (apiCfg *apiConfig) handlerUpdateTodo(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := uuid.Parse(idStr)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't parse id: %v", err))
 		return
 	}
 
-	indToDelete := -1
-	for i, elem := range todoList {
-		if elem.ID == id {
-			indToDelete = i
-			break
-		}
-	}
+	todoOld, err := apiCfg.DB.GetTodo(r.Context(), id)
 
-	if indToDelete == -1 {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, fmt.Sprintf("Coudn't find todos: %v", err))
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, todoList[indToDelete])
+	type parameters struct {
+		Title  string `json:"title"`
+		Status string `json:"status"`
+	}
 
-	todoList = append(todoList[:indToDelete], todoList[indToDelete+1:]...)
+	decoder := json.NewDecoder(r.Body)
+
+	params := parameters{}
+	err = decoder.Decode(&params)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Error parsing JSON: %v", err))
+		return
+	}
+
+	todoNew, err := apiCfg.DB.UpdateTodo(r.Context(), database.UpdateTodoParams{
+		ID:     id,
+		Title:  params.Title,
+		Status: params.Status,
+	})
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't update user: %v", err))
+		return
+	}
+
+	if todoNew.Title == todoOld.Title && todoNew.Status == todoOld.Status {
+		respondWithError(w, http.StatusNoContent, fmt.Sprintf("Coudn't update user: %v", err))
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, databaseTodotoTodo(todoNew))
+}
+
+func (apiCfg *apiConfig) handlerDeleteTodo(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := uuid.Parse(idStr)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't parse id: %v", err))
+		return
+	}
+
+	todo, err := apiCfg.DB.GetTodo(r.Context(), id)
+
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, fmt.Sprintf("Coudn't find todos: %v", err))
+		return
+	}
+
+	err = apiCfg.DB.DeleteTodo(r.Context(), id)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't delete: %v", err))
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, databaseTodotoTodo(todo))
 }
 
 func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
@@ -167,4 +229,14 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(code)
 	w.Write(data)
+}
+
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	type errResponse struct {
+		Error string `json:"error"`
+	}
+
+	respondWithJSON(w, code, errResponse{
+		Error: msg,
+	})
 }
