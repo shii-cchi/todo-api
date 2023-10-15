@@ -9,6 +9,13 @@ type Todo struct {
 	ID     uuid.UUID `json:"id"`
 	Title  string    `json:"title"`
 	Status string    `json:"status"`
+	UserID uuid.UUID `json:"userId"`
+}
+
+type User struct {
+	ID     uuid.UUID `json:"id"`
+	Name   string    `json:"name"`
+	ApiKey string    `json:"apiKey"`
 }
 
 func databaseTodotoTodo(dbTodo database.Todo) Todo {
@@ -16,6 +23,15 @@ func databaseTodotoTodo(dbTodo database.Todo) Todo {
 		ID:     dbTodo.ID,
 		Title:  dbTodo.Title,
 		Status: dbTodo.Status,
+		UserID: dbTodo.UserID,
+	}
+}
+
+func databaseUsertoUser(dbTodo database.User) User {
+	return User{
+		ID:     dbTodo.ID,
+		Name:   dbTodo.Name,
+		ApiKey: dbTodo.ApiKey,
 	}
 }
 

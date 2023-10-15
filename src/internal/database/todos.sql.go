@@ -12,22 +12,32 @@ import (
 )
 
 const createTodo = `-- name: CreateTodo :one
-
-INSERT INTO todos (id, title, status)
-VALUES ($1, $2, $3)
-RETURNING id, title, status
+INSERT INTO todos (id, title, status, user_id)
+VALUES ($1, $2, $3, $4)
+RETURNING id, title, status, user_id
 `
 
 type CreateTodoParams struct {
 	ID     uuid.UUID
 	Title  string
 	Status string
+	UserID uuid.UUID
 }
 
 func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, error) {
-	row := q.db.QueryRowContext(ctx, createTodo, arg.ID, arg.Title, arg.Status)
+	row := q.db.QueryRowContext(ctx, createTodo,
+		arg.ID,
+		arg.Title,
+		arg.Status,
+		arg.UserID,
+	)
 	var i Todo
-	err := row.Scan(&i.ID, &i.Title, &i.Status)
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Status,
+		&i.UserID,
+	)
 	return i, err
 }
 
@@ -41,19 +51,23 @@ func (q *Queries) DeleteTodo(ctx context.Context, id uuid.UUID) error {
 }
 
 const getTodo = `-- name: GetTodo :one
-SELECT id, title, status FROM todos WHERE id = $1
+SELECT id, title, status, user_id FROM todos WHERE id = $1
 `
 
 func (q *Queries) GetTodo(ctx context.Context, id uuid.UUID) (Todo, error) {
 	row := q.db.QueryRowContext(ctx, getTodo, id)
 	var i Todo
-	err := row.Scan(&i.ID, &i.Title, &i.Status)
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Status,
+		&i.UserID,
+	)
 	return i, err
 }
 
 const getTodosList = `-- name: GetTodosList :many
-
-SELECT id, title, status FROM todos
+SELECT id, title, status, user_id FROM todos
 `
 
 func (q *Queries) GetTodosList(ctx context.Context) ([]Todo, error) {
@@ -65,7 +79,12 @@ func (q *Queries) GetTodosList(ctx context.Context) ([]Todo, error) {
 	var items []Todo
 	for rows.Next() {
 		var i Todo
-		if err := rows.Scan(&i.ID, &i.Title, &i.Status); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Status,
+			&i.UserID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -83,7 +102,7 @@ const updateTodo = `-- name: UpdateTodo :one
 UPDATE todos
 SET title = $2, status = $3
 WHERE id = $1
-RETURNING id, title, status
+RETURNING id, title, status, user_id
 `
 
 type UpdateTodoParams struct {
@@ -95,6 +114,11 @@ type UpdateTodoParams struct {
 func (q *Queries) UpdateTodo(ctx context.Context, arg UpdateTodoParams) (Todo, error) {
 	row := q.db.QueryRowContext(ctx, updateTodo, arg.ID, arg.Title, arg.Status)
 	var i Todo
-	err := row.Scan(&i.ID, &i.Title, &i.Status)
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Status,
+		&i.UserID,
+	)
 	return i, err
 }

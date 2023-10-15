@@ -12,4 +12,11 @@ type Todo struct {
 	ID     uuid.UUID
 	Title  string
 	Status string
+	UserID uuid.UUID
+}
+
+type User struct {
+	ID     uuid.UUID
+	Name   string
+	ApiKey string
 }

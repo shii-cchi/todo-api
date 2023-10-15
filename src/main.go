@@ -45,6 +45,7 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Get("/", homeHandler)
+	r.Mount("/users", apiCfg.userHandlers())
 	r.Mount("/todo", apiCfg.todoHandlers())
 
 	srv := &http.Server{
@@ -127,14 +128,34 @@ func (apiCfg *apiConfig) handlerCreateTodo(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	apiKey := r.Header.Get("Authorization")
+
+	if apiKey == "" {
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	userId, err := apiCfg.DB.CheckApiKey(r.Context(), apiKey)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't check: %v", err))
+		return
+	}
+
+	if userId == uuid.Nil {
+		respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("fffffffffff: %v", err))
+		return
+	}
+
 	todo, err := apiCfg.DB.CreateTodo(r.Context(), database.CreateTodoParams{
 		ID:     uuid.New(),
 		Title:  params.Title,
 		Status: params.Status,
+		UserID: userId,
 	})
 
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't create user: %v", err))
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't create todo: %v", err))
 		return
 	}
 
@@ -239,4 +260,39 @@ func respondWithError(w http.ResponseWriter, code int, msg string) {
 	respondWithJSON(w, code, errResponse{
 		Error: msg,
 	})
+}
+
+func (apiCfg *apiConfig) userHandlers() http.Handler {
+	rg := chi.NewRouter()
+	rg.Post("/", apiCfg.handlerCreateUser)
+	return rg
+}
+
+func (apiCfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		ID   uuid.UUID `json:"id"`
+		Name string    `json:"name"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+
+	params := parameters{}
+	err := decoder.Decode(&params)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Error parsing JSON: %v", err))
+		return
+	}
+
+	user, err := apiCfg.DB.CreateUser(r.Context(), database.CreateUserParams{
+		ID:   uuid.New(),
+		Name: params.Name,
+	})
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Coudn't create user: %v", err))
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, databaseUsertoUser(user))
 }
