@@ -12,25 +12,19 @@ import (
 )
 
 const createTodo = `-- name: CreateTodo :one
-INSERT INTO todos (id, title, status, user_id)
-VALUES ($1, $2, $3, $4)
+INSERT INTO todos (title, status, user_id)
+VALUES ($1, $2, $3)
 RETURNING id, title, status, user_id
 `
 
 type CreateTodoParams struct {
-	ID     uuid.UUID
 	Title  string
 	Status string
 	UserID uuid.UUID
 }
 
 func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, error) {
-	row := q.db.QueryRowContext(ctx, createTodo,
-		arg.ID,
-		arg.Title,
-		arg.Status,
-		arg.UserID,
-	)
+	row := q.db.QueryRowContext(ctx, createTodo, arg.Title, arg.Status, arg.UserID)
 	var i Todo
 	err := row.Scan(
 		&i.ID,
@@ -42,20 +36,31 @@ func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, e
 }
 
 const deleteTodo = `-- name: DeleteTodo :exec
-DELETE FROM todos WHERE id = $1
+DELETE FROM todos WHERE id = $1 AND user_id = $2
 `
 
-func (q *Queries) DeleteTodo(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, deleteTodo, id)
+type DeleteTodoParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+func (q *Queries) DeleteTodo(ctx context.Context, arg DeleteTodoParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTodo, arg.ID, arg.UserID)
 	return err
 }
 
 const getTodo = `-- name: GetTodo :one
-SELECT id, title, status, user_id FROM todos WHERE id = $1
+SELECT id, title, status, user_id FROM todos
+WHERE id = $1 AND user_id = $2
 `
 
-func (q *Queries) GetTodo(ctx context.Context, id uuid.UUID) (Todo, error) {
-	row := q.db.QueryRowContext(ctx, getTodo, id)
+type GetTodoParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+func (q *Queries) GetTodo(ctx context.Context, arg GetTodoParams) (Todo, error) {
+	row := q.db.QueryRowContext(ctx, getTodo, arg.ID, arg.UserID)
 	var i Todo
 	err := row.Scan(
 		&i.ID,
@@ -68,10 +73,11 @@ func (q *Queries) GetTodo(ctx context.Context, id uuid.UUID) (Todo, error) {
 
 const getTodosList = `-- name: GetTodosList :many
 SELECT id, title, status, user_id FROM todos
+WHERE user_id = $1
 `
 
-func (q *Queries) GetTodosList(ctx context.Context) ([]Todo, error) {
-	rows, err := q.db.QueryContext(ctx, getTodosList)
+func (q *Queries) GetTodosList(ctx context.Context, userID uuid.UUID) ([]Todo, error) {
+	rows, err := q.db.QueryContext(ctx, getTodosList, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -100,19 +106,25 @@ func (q *Queries) GetTodosList(ctx context.Context) ([]Todo, error) {
 
 const updateTodo = `-- name: UpdateTodo :one
 UPDATE todos
-SET title = $2, status = $3
-WHERE id = $1
+SET title = $3, status = $4
+WHERE id = $1 AND user_id = $2
 RETURNING id, title, status, user_id
 `
 
 type UpdateTodoParams struct {
 	ID     uuid.UUID
+	UserID uuid.UUID
 	Title  string
 	Status string
 }
 
 func (q *Queries) UpdateTodo(ctx context.Context, arg UpdateTodoParams) (Todo, error) {
-	row := q.db.QueryRowContext(ctx, updateTodo, arg.ID, arg.Title, arg.Status)
+	row := q.db.QueryRowContext(ctx, updateTodo,
+		arg.ID,
+		arg.UserID,
+		arg.Title,
+		arg.Status,
+	)
 	var i Todo
 	err := row.Scan(
 		&i.ID,
